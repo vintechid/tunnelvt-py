@@ -1,6 +1,6 @@
-"""WebSocket tunnel client — connect, register, forward requests to localhost.
+"""WebSocket tunnel client — connect to gotunnel, register, forward requests.
 
-Works through Cloudflare — WebSocket upgrade over HTTPS, server IP hidden.
+Server URL is hardcoded. The end user only provides token, app name, and port.
 """
 
 from __future__ import annotations
@@ -8,7 +8,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 import random
 import sys
 import threading
@@ -19,6 +18,8 @@ from urllib.parse import urlparse, urlunparse
 import websocket
 
 logger = logging.getLogger("tunnelvt")
+
+DEFAULT_SERVER = "https://gotunnel.vinstechid.com"
 
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate",
@@ -40,40 +41,28 @@ def _build_ws_url(server_url: str) -> str:
 
 
 class TunnelVT:
-    """Connect to a tunnelvt server and expose a local port.
+    """Connect to gotunnel and expose a local port.
 
     Parameters
     ----------
-    server_url : str
-        Tunnel server URL, e.g. ``"https://tunnel.example.com"``.
+    token : str
+        Auth token (ask your team).
     app : str
         App name for this tunnel.
     port : int
         Local port to expose.
-    token : str
-        Pre-shared auth token.
-    device : str | None
-        Device ID. Random 16-char hex if omitted.
     """
 
-    def __init__(
-        self,
-        server_url: str,
-        app: str,
-        port: int,
-        token: str = "",
-        device: str | None = None,
-    ) -> None:
-        self.server_url = server_url
+    def __init__(self, token: str = "", app: str = "", port: int = 0) -> None:
+        self.token = token
         self.app = app
         self.port = port
-        self.token = token
-        self.device = device or _generate_device_id()
+        self._device = _generate_device_id()
         self._ws: websocket.WebSocket | None = None
 
     def connect(self) -> None:
         """Dial the server, register, and block forwarding requests."""
-        ws_url = _build_ws_url(self.server_url)
+        ws_url = _build_ws_url(DEFAULT_SERVER)
         self._ws = websocket.create_connection(ws_url, timeout=30)
         try:
             self._register()
@@ -85,7 +74,7 @@ class TunnelVT:
         msg = {
             "type": "register",
             "token": self.token,
-            "device": self.device,
+            "device": self._device,
             "app": self.app,
             "port": self.port,
         }
@@ -95,8 +84,9 @@ class TunnelVT:
             raise RuntimeError("server closed connection")
         if ack.get("type") == "error":
             raise RuntimeError(f"server rejected registration: {ack.get('error')}")
-        self.device = ack.get("device", self.device)
-        logger.info("connected — %s/%s -> localhost:%d", self.device, self.app, self.port)
+        self._device = ack.get("device", self._device)
+        print(f"https://gotunnel.vinstechid.com/{self._device}/{self.app}/")
+        logger.info("connected — %s/%s -> localhost:%d", self._device, self.app, self.port)
 
     def _read_loop(self) -> None:
         while True:

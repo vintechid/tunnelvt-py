@@ -12,13 +12,9 @@ from .client import TunnelVT
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(
         prog="tunnelvt",
-        description="Expose a local port through a tunnelvt server (WebSocket).",
+        description="Expose a local port through gotunnel.",
     )
-    p.add_argument("-s", "--server", default="http://localhost:8080",
-                   help="server URL (default: http://localhost:8080)")
-    p.add_argument("-t", "--token", default="", help="pre-shared auth token")
-    p.add_argument("-d", "--device", default="",
-                   help="device ID (randomly generated if omitted)")
+    p.add_argument("-t", "--token", default="", help="auth token")
     p.add_argument("-a", "--app", required=True, help="app name for this tunnel")
     p.add_argument("-p", "--port", type=int, required=True, help="local port to expose")
     p.add_argument("-v", "--verbose", action="store_true", help="enable debug logging")
@@ -29,13 +25,7 @@ def main(argv: list[str] | None = None) -> None:
         format="[tunnelvt] %(levelname)s %(message)s",
     )
 
-    client = TunnelVT(
-        server_url=args.server,
-        token=args.token,
-        device=args.device or None,
-        app=args.app,
-        port=args.port,
-    )
+    client = TunnelVT(token=args.token, app=args.app, port=args.port)
     try:
         client.connect()
     except KeyboardInterrupt:
