@@ -1,7 +1,5 @@
-"""WebSocket tunnel client — username+password → JWT, auto-refresh.
-
-First run prompts for username+password. Gets JWT from /_tunnel/auth.
-Saves to ~/.tunnelvt.json. JWT expires 7 days — auto-refreshes with saved creds.
+"""WebSocket tunnel client — username+password → JWT, auto-reconnect with backoff.
+First run prompts for credentials. JWT expires 7 days — auto-refreshes.
 """
 
 from __future__ import annotations
@@ -10,8 +8,10 @@ import base64
 import getpass
 import json
 import logging
+import random
 import sys
 import threading
+import time
 from http.client import HTTPConnection, HTTPResponse
 from pathlib import Path
 from typing import Any
@@ -66,16 +66,24 @@ class TunnelVT:
         self._ws: websocket.WebSocket | None = None
 
     def connect(self) -> None:
+        self._ensure_jwt()
+        backoff = 1.0
         while True:
-            self._ensure_jwt()
             try:
                 self._connect_ws()
-                return
+                backoff = 1.0  # reset on clean disconnect
             except Exception as e:
-                if "invalid or expired" in str(e):
+                msg = str(e)
+                if "invalid or expired" in msg:
                     self._jwt = ""
+                    self._ensure_jwt()
+                    backoff = 1.0
                     continue
-                raise
+                jitter = backoff * 0.25 * (2 * random.random() - 1)
+                wait = backoff + jitter
+                logger.info("reconnecting in %.1fs", wait)
+                time.sleep(wait)
+                backoff = min(backoff * 2, 60.0)
 
     def _connect_ws(self) -> None:
         ws_url = _build_ws_url(DEFAULT_SERVER)
@@ -123,12 +131,9 @@ class TunnelVT:
 
     def _register(self) -> None:
         msg = {
-            "type": "register",
-            "jwt": self._jwt,
-            "app": self.app,
-            "port": self.port,
-            "version": VERSION,
-            "vhash": BUILD_HASH,
+            "type": "register", "jwt": self._jwt,
+            "app": self.app, "port": self.port,
+            "version": VERSION, "vhash": BUILD_HASH,
         }
         self._send(msg)
         ack = self._recv()
