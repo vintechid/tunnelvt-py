@@ -1,5 +1,7 @@
-"""WebSocket tunnel client — prompt for username+password on first run,
-save to ~/.tunnelvt.json. Simple. No JWT, no device ID, no shared token.
+"""WebSocket tunnel client — username+password → JWT, auto-refresh.
+
+First run prompts for username+password. Gets JWT from /_tunnel/auth.
+Saves to ~/.tunnelvt.json. JWT expires 7 days — auto-refreshes with saved creds.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from http.client import HTTPConnection, HTTPResponse
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
+from urllib.request import Request, urlopen
 
 import websocket
 
@@ -41,26 +44,40 @@ def _build_ws_url(server_url: str) -> str:
     return urlunparse((scheme, p.netloc, "/_tunnel/connect", "", "", ""))
 
 
-class TunnelVT:
-    """Connect to gotunnel and expose a local port.
+def _fetch_jwt(server_url: str, username: str, password: str) -> str:
+    data = json.dumps({"username": username, "password": password}).encode()
+    req = Request(server_url + "/_tunnel/auth", data=data,
+                  headers={"Content-Type": "application/json"})
+    with urlopen(req, timeout=10) as resp:
+        if resp.status != 200:
+            raise RuntimeError(resp.read().decode())
+        return json.loads(resp.read())["jwt"]
 
-    Parameters
-    ----------
-    app : str
-        App name for this tunnel.
-    port : int
-        Local port to expose.
-    """
+
+class TunnelVT:
+    """Connect to gotunnel and expose a local port."""
 
     def __init__(self, app: str = "", port: int = 0) -> None:
         self.app = app
         self.port = port
         self._username = ""
         self._password = ""
+        self._jwt = ""
         self._ws: websocket.WebSocket | None = None
 
     def connect(self) -> None:
-        self._load_or_prompt()
+        while True:
+            self._ensure_jwt()
+            try:
+                self._connect_ws()
+                return
+            except Exception as e:
+                if "invalid or expired" in str(e):
+                    self._jwt = ""
+                    continue
+                raise
+
+    def _connect_ws(self) -> None:
         ws_url = _build_ws_url(DEFAULT_SERVER)
         self._ws = websocket.create_connection(ws_url, timeout=30)
         try:
@@ -69,32 +86,45 @@ class TunnelVT:
         finally:
             self._ws.close()
 
-    def _load_or_prompt(self) -> None:
+    def _ensure_jwt(self) -> None:
         idf = _identity_file()
         if idf.exists():
             try:
                 data = json.loads(idf.read_text())
                 if data.get("username"):
                     self._username = data["username"]
-                    self._password = data["password"]
-                    return
+                    self._password = data.get("password", "")
+                    self._jwt = data.get("jwt", "")
             except Exception:
                 pass
 
-        self._username = input("Username: ").strip()
         if not self._username:
-            raise RuntimeError("username required")
-        self._password = getpass.getpass("Password: ").strip()
-        if not self._password:
-            raise RuntimeError("password required")
+            self._username = input("Username: ").strip()
+            if not self._username:
+                raise RuntimeError("username required")
+            self._password = getpass.getpass("Password: ").strip()
+            if not self._password:
+                raise RuntimeError("password required")
 
-        idf.write_text(json.dumps({"username": self._username, "password": self._password}))
+        if not self._jwt:
+            try:
+                self._jwt = _fetch_jwt(DEFAULT_SERVER, self._username, self._password)
+            except Exception:
+                idf.unlink(missing_ok=True)
+                self._username = ""
+                self._password = ""
+                raise
+
+        idf.write_text(json.dumps({
+            "username": self._username,
+            "password": self._password,
+            "jwt": self._jwt,
+        }))
 
     def _register(self) -> None:
         msg = {
             "type": "register",
-            "username": self._username,
-            "password": self._password,
+            "jwt": self._jwt,
             "app": self.app,
             "port": self.port,
             "version": VERSION,
@@ -103,14 +133,9 @@ class TunnelVT:
         self._send(msg)
         ack = self._recv()
         if ack is None:
-            raise RuntimeError("server closed connection")
+            raise RuntimeError("connection closed")
         if ack.get("type") == "error":
-            _identity_file().unlink(missing_ok=True)
-            raise RuntimeError(f"server rejected: {ack.get('error')}")
-
-        if ack.get("status") == 201:
-            logger.info("account created — welcome, %s!", self._username)
-
+            raise RuntimeError(ack.get("error", "server rejected"))
         print(f"https://gotunnel.vinstechid.com/{self._username}/{self.app}/")
         logger.info("connected — %s/%s -> localhost:%d", self._username, self.app, self.port)
 
@@ -134,23 +159,18 @@ class TunnelVT:
             body = base64.b64decode(msg.get("body", ""))
         except Exception:
             return err("invalid body encoding")
-
         conn = HTTPConnection("localhost", self.port, timeout=25)
         try:
             headers = {k: v for k, v in msg.get("headers", {}).items()
                        if k.lower() not in HOP_BY_HOP}
-            conn.request(
-                method=msg.get("method", "GET"),
-                url=msg.get("path", "/"),
-                body=body if body else None,
-                headers=headers,
-            )
+            conn.request(method=msg.get("method", "GET"), url=msg.get("path", "/"),
+                         body=body if body else None, headers=headers)
             resp: HTTPResponse = conn.getresponse()
             resp_body = resp.read(MAX_BODY)
-            resp_headers = dict(resp.getheaders())
             return {
                 "type": "response", "id": req_id, "status": resp.status,
-                "headers": resp_headers, "body": base64.b64encode(resp_body).decode(),
+                "headers": dict(resp.getheaders()),
+                "body": base64.b64encode(resp_body).decode(),
             }
         except Exception as exc:
             return err(f"local request failed: {exc}")
