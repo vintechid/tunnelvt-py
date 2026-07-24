@@ -12,9 +12,8 @@ from .client import TunnelVT
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(
         prog="tunnelvt",
-        description="Expose a local port through gotunnel.",
+        description="Expose a local port through gotunnel. No login needed.",
     )
-    p.add_argument("-t", "--token", default="", help="auth token")
     p.add_argument("-a", "--app", required=True, help="app name for this tunnel")
     p.add_argument("-p", "--port", type=int, required=True, help="local port to expose")
     p.add_argument("-v", "--verbose", action="store_true", help="enable debug logging")
@@ -25,7 +24,7 @@ def main(argv: list[str] | None = None) -> None:
         format="[tunnelvt] %(levelname)s %(message)s",
     )
 
-    client = TunnelVT(token=args.token, app=args.app, port=args.port)
+    client = TunnelVT(app=args.app, port=args.port)
     try:
         client.connect()
     except KeyboardInterrupt:
