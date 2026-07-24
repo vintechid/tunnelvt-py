@@ -136,7 +136,7 @@ class TunnelVT:
             raise RuntimeError("connection closed")
         if ack.get("type") == "error":
             raise RuntimeError(ack.get("error", "server rejected"))
-        print(f"https://gotunnel.vinstechid.com/{self._username}/{self.app}/")
+        print(f"https://gotunnel.vinstechid.com/a/{self._username}/{self.app}/")
         logger.info("connected — %s/%s -> localhost:%d", self._username, self.app, self.port)
 
     def _read_loop(self) -> None:
