@@ -1,23 +1,19 @@
-"""WebSocket tunnel client — auto-fetch JWT on first run, save to ~/.tunnelvt.json.
-
-No login. Identity is a random device ID + JWT persisted locally. Survives
-network changes, reboots, different WiFi. Not tied to MAC or IP.
+"""WebSocket tunnel client — prompt for username+password on first run,
+save to ~/.tunnelvt.json. Simple. No JWT, no device ID, no shared token.
 """
 
 from __future__ import annotations
 
 import base64
+import getpass
 import json
 import logging
-import os
-import random
 import sys
 import threading
 from http.client import HTTPConnection, HTTPResponse
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urlunparse
-from urllib.request import Request, urlopen
 
 import websocket
 
@@ -39,23 +35,10 @@ def _identity_file() -> Path:
     return Path.home() / ".tunnelvt.json"
 
 
-def _generate_device_id() -> str:
-    return "".join(random.choices("0123456789abcdef", k=16))
-
-
 def _build_ws_url(server_url: str) -> str:
     p = urlparse(server_url)
     scheme = "wss" if p.scheme in ("https", "wss") else "ws"
     return urlunparse((scheme, p.netloc, "/_tunnel/connect", "", "", ""))
-
-
-def _fetch_jwt(server_url: str, device: str) -> str:
-    data = json.dumps({"device": device}).encode()
-    req = Request(server_url + "/_tunnel/hello", data=data,
-                  headers={"Content-Type": "application/json"})
-    with urlopen(req, timeout=10) as resp:
-        body = json.loads(resp.read())
-        return body["jwt"]
 
 
 class TunnelVT:
@@ -72,12 +55,12 @@ class TunnelVT:
     def __init__(self, app: str = "", port: int = 0) -> None:
         self.app = app
         self.port = port
-        self._device = ""
-        self._jwt = ""
+        self._username = ""
+        self._password = ""
         self._ws: websocket.WebSocket | None = None
 
     def connect(self) -> None:
-        self._load_or_fetch_identity()
+        self._load_or_prompt()
         ws_url = _build_ws_url(DEFAULT_SERVER)
         self._ws = websocket.create_connection(ws_url, timeout=30)
         try:
@@ -86,27 +69,32 @@ class TunnelVT:
         finally:
             self._ws.close()
 
-    def _load_or_fetch_identity(self) -> None:
+    def _load_or_prompt(self) -> None:
         idf = _identity_file()
         if idf.exists():
             try:
                 data = json.loads(idf.read_text())
-                if data.get("jwt"):
-                    self._device = data["device"]
-                    self._jwt = data["jwt"]
+                if data.get("username"):
+                    self._username = data["username"]
+                    self._password = data["password"]
                     return
             except Exception:
                 pass
 
-        self._device = _generate_device_id()
-        self._jwt = _fetch_jwt(DEFAULT_SERVER, self._device)
-        idf.write_text(json.dumps({"device": self._device, "jwt": self._jwt}))
+        self._username = input("Username: ").strip()
+        if not self._username:
+            raise RuntimeError("username required")
+        self._password = getpass.getpass("Password: ").strip()
+        if not self._password:
+            raise RuntimeError("password required")
+
+        idf.write_text(json.dumps({"username": self._username, "password": self._password}))
 
     def _register(self) -> None:
         msg = {
             "type": "register",
-            "jwt": self._jwt,
-            "device": self._device,
+            "username": self._username,
+            "password": self._password,
             "app": self.app,
             "port": self.port,
             "version": VERSION,
@@ -117,10 +105,14 @@ class TunnelVT:
         if ack is None:
             raise RuntimeError("server closed connection")
         if ack.get("type") == "error":
-            raise RuntimeError(f"server rejected registration: {ack.get('error')}")
-        self._device = ack.get("device", self._device)
-        print(f"https://gotunnel.vinstechid.com/{self._device}/{self.app}/")
-        logger.info("connected — %s/%s -> localhost:%d", self._device, self.app, self.port)
+            _identity_file().unlink(missing_ok=True)
+            raise RuntimeError(f"server rejected: {ack.get('error')}")
+
+        if ack.get("status") == 201:
+            logger.info("account created — welcome, %s!", self._username)
+
+        print(f"https://gotunnel.vinstechid.com/{self._username}/{self.app}/")
+        logger.info("connected — %s/%s -> localhost:%d", self._username, self.app, self.port)
 
     def _read_loop(self) -> None:
         while True:
