@@ -1,6 +1,7 @@
 """WebSocket tunnel client — auto-fetch JWT on first run, save to ~/.tunnelvt.json.
 
-No login. Trust-on-first-use identity. Version hash sent for server-side auditing.
+No login. Identity is a random device ID + JWT persisted locally. Survives
+network changes, reboots, different WiFi. Not tied to MAC or IP.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ logger = logging.getLogger("tunnelvt")
 
 DEFAULT_SERVER = "https://gotunnel.vinstechid.com"
 VERSION = "1.0.0"
-BUILD_HASH = "dev"  # set at build time
+BUILD_HASH = "dev"
 
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate",
@@ -49,7 +50,6 @@ def _build_ws_url(server_url: str) -> str:
 
 
 def _fetch_jwt(server_url: str, device: str) -> str:
-    """Call /_tunnel/hello to get a JWT for this device."""
     data = json.dumps({"device": device}).encode()
     req = Request(server_url + "/_tunnel/hello", data=data,
                   headers={"Content-Type": "application/json"})
@@ -100,7 +100,6 @@ class TunnelVT:
 
         self._device = _generate_device_id()
         self._jwt = _fetch_jwt(DEFAULT_SERVER, self._device)
-
         idf.write_text(json.dumps({"device": self._device, "jwt": self._jwt}))
 
     def _register(self) -> None:
