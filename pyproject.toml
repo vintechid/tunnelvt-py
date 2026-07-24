@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tunnelvt"
+version = "0.1.0"
+description = "Simple tunneling — expose local apps behind Cloudflare. No login."
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = ["tunnel", "ngrok", "localhost", "expose", "webhook", "proxy", "cloudflare"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: Proxy Servers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "websocket-client>=1.7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov"]
+
+[project.urls]
+Homepage = "https://github.com/vintechids/tunnelvt-py"
+Repository = "https://github.com/vintechids/tunnelvt-py"
+
+[project.scripts]
+tunnelvt = "tunnelvt.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
