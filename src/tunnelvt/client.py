@@ -118,13 +118,22 @@ class TunnelVT:
                 raise RuntimeError("password required")
 
         if not self._jwt:
-            try:
-                self._jwt = _fetch_jwt(DEFAULT_SERVER, self._username, self._password)
-            except Exception:
-                idf.unlink(missing_ok=True)
-                self._username = ""
-                self._password = ""
-                raise
+            while True:
+                try:
+                    self._jwt = _fetch_jwt(DEFAULT_SERVER, self._username, self._password)
+                    break
+                except Exception as e:
+                    msg = str(e)
+                    if "wrong password" in msg.lower():
+                        print(f"Invalid password for {self._username}.", file=sys.stderr)
+                        self._password = getpass.getpass("Password: ").strip()
+                        if not self._password:
+                            raise RuntimeError("password required")
+                        continue
+                    idf.unlink(missing_ok=True)
+                    self._username = ""
+                    self._password = ""
+                    raise
 
         idf.write_text(json.dumps({
             "username": self._username,
