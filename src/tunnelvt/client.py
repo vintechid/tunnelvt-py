@@ -74,6 +74,9 @@ class TunnelVT:
                 backoff = 1.0  # reset on clean disconnect
             except Exception as e:
                 msg = str(e)
+                if "already registered" in msg:
+                    time.sleep(1)
+                    continue
                 if "invalid or expired" in msg:
                     self._jwt = ""
                     self._ensure_jwt()

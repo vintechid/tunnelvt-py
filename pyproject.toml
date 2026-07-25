@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tunnelvt"
-version = "0.1.0"
+version = "0.2.9"
 description = "Simple tunneling — expose local apps behind Cloudflare. No login."
 license = {text = "MIT"}
 readme = "README.md"
